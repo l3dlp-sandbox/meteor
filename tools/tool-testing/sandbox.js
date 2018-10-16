@@ -39,6 +39,7 @@
 //   - port: the port that the clients should run on
 import * as files from '../fs/files.js';
 import PhantomClient from './clients/phantom/index.js';
+import PuppeteerClient from './clients/puppeteer/index.js';
 import BrowserStackClient from './clients/browserstack/index.js';
 import Builder from '../isobuild/builder.js';
 import Run from './run.js';
@@ -82,7 +83,7 @@ export default class Sandbox {
       this.warehouse = files.pathJoin(this.root, 'tropohouse');
       this._makeWarehouse(this.options.warehouse);
     }
-
+    
     const meteorScript = process.platform === "win32" ? "meteor.bat" : "meteor";
 
     // Figure out the 'meteor' to run
@@ -130,6 +131,10 @@ export default class Sandbox {
         PhantomClient.pushClients(this.clients, appConfig);
       }
 
+      if (clientOptions.puppeteer) {
+        PuppeteerClient.pushClients(this.clients, appConfig);
+      }
+
       if (clientOptions.browserstack && BrowserStackClient.prerequisitesMet()) {
         BrowserStackClient.pushClients(this.clients, appConfig);
       }
@@ -167,9 +172,14 @@ export default class Sandbox {
   createApp(to, template, options) {
     options = options || {};
     const absoluteTo = files.pathJoin(this.cwd, to);
-    files.cp_r(files.pathJoin(
-      files.convertToStandardPath(__dirname), '..', 'tests', 'apps', template),
-        absoluteTo, { ignore: [/^local$/] });
+    const absoluteFrom = files.pathJoin(
+      files.convertToStandardPath(__dirname),
+      '..', 'tests', 'apps', template
+    );
+    files.cp_r(absoluteFrom, absoluteTo, {
+      ignore: [/^local$/],
+      preserveSymlinks: true,
+    });
     // If the test isn't explicitly managing a mock warehouse, ensure that apps
     // run with our release by default.
     if (options.release) {
@@ -222,7 +232,9 @@ export default class Sandbox {
     const packagePath = files.pathJoin(this.cwd, packageDir);
     const templatePackagePath = files.pathJoin(
       files.convertToStandardPath(__dirname), '..', 'tests', 'packages', template);
-    files.cp_r(templatePackagePath, packagePath);
+    files.cp_r(templatePackagePath, packagePath, {
+      preserveSymlinks: true,
+    });
 
     files.readdir(packagePath).forEach((file) => {
       if (file.match(/^package.*\.js$/)) {
@@ -546,14 +558,14 @@ const ROOT_PACKAGES_TO_BUILD_IN_SANDBOX = [
   'mongo',
   'blaze-html-templates',
   'session',
-  'jquery',
   'tracker',
   "autopublish",
   "insecure",
   "standard-minifier-css",
   "standard-minifier-js",
   "es5-shim",
-  "shell-server"
+  "shell-server",
+  "modern-browsers",
 ];
 
 function newSelfTestCatalog() {
@@ -577,6 +589,7 @@ function newSelfTestCatalog() {
       selfTestCatalog.initialize({
         localPackageSearchDirs: [
           packagesDir,
+          files.pathJoin(packagesDir, "non-core"),
           files.pathJoin(packagesDir, "non-core", "*", "packages"),
         ],
       });

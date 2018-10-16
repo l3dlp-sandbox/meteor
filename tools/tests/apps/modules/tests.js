@@ -284,7 +284,7 @@ describe("local node_modules", () => {
 
   it('should expose "version" field of package.json', () => {
     const pkg = require("moment/package.json");
-    assert.strictEqual(pkg.version, "2.11.1");
+    assert.strictEqual(pkg.version, "2.22.2");
   });
 
   it('should support object-valued package.json "browser" fields', () => {
@@ -457,6 +457,104 @@ describe("Meteor packages", () => {
     assert.strictEqual(array[0], "asdf");
     assert.strictEqual(array[1], array);
     assert.strictEqual(array[2], Infinity);
+  });
+});
+
+describe("symlinking node_modules", () => {
+  it("should allow selective compilation of npm packages", () => {
+    import each from "lodash-es/each";
+    import range from "lodash-es/range";
+    const n = 100;
+    let sum = 0;
+    each(range(1, n + 1), n => sum += n);
+    assert.strictEqual(sum, n * (n + 1) / 2);
+  });
+
+  it("should preserve equivalence for require", async () => {
+    const pkg1 = require("immutable-tuple/package.json");
+    const pkg2 = require("./imports/links/immutable-tuple/package");
+    assert.strictEqual(pkg1.author.name, "Ben Newman");
+    assert.strictEqual(pkg1.author, pkg2.author);
+  });
+
+  it("should preserve equivalence for dynamic import()", async () => {
+    const { default: tuple1 } = await import("immutable-tuple/src/tuple");
+    const { tuple: tuple2 } =
+      await import("/imports/links/immutable-tuple/src/tuple");
+    assert.strictEqual(tuple1, tuple2);
+  });
+
+  it("should support application-compiled `npm link`ed packages", () => {
+    assert.strictEqual(
+      require.resolve("acorn"),
+      "/node_modules/acorn/src/index.js"
+    );
+    const { parse } = require("acorn");
+    assert.strictEqual(typeof parse, "function");
+    assert.strictEqual(
+      parse,
+      require("./imports/links/acorn").parse
+    );
+  });
+
+  it("should not break custom import extensions", () => {
+    import { jsx } from "jsx-import-test";
+    assert.strictEqual(jsx.type, "div");
+    assert.strictEqual(jsx.props.children, "oyez");
+    return import("./imports/links/jsx-import-test/child").then(ns => {
+      assert.strictEqual(ns.default, jsx);
+    });
+  });
+});
+
+describe("issue #9878", () => {
+  it("should be fixed by PR #9903", () => {
+    const {
+      packageJson,
+      normalJson,
+    } = require("./issue-9878-test-package");
+
+    assert.deepEqual(packageJson, {
+      stripped: false,
+      nested: {
+        stripped: false,
+        _stripped: false
+      }
+    });
+
+    assert.deepEqual(normalJson, {
+      stripped: false,
+      _stripped: false,
+      nested: {
+        stripped: false,
+        _stripped: false
+      }
+    });
+
+    assert.deepEqual(require("./issue-9878-test-package/package"), {
+      name: "issue-9878-test-package",
+      main: "main.js",
+      nested: {
+        _stripped: false
+      }
+    });
+  });
+});
+
+describe("issue #10233", () => {
+  it("should be fixed", () => {
+    require("meteor/dummy-compiler").check();
+  });
+});
+
+describe("local .json modules", () => {
+  it("should be importable within Meteor packages (issue #10122)", () => {
+    import { oyez } from "meteor/import-local-json-module";
+    assert.strictEqual(oyez, 1234);
+    assert.strictEqual(
+      require("meteor/import-local-json-module/data").oyez,
+      1234
+    );
   });
 });
 

@@ -297,6 +297,15 @@ function statOrNull(path, preserveSymlinks) {
   }
 }
 
+export function realpathOrNull(path) {
+  try {
+    return files.realpath(path);
+  } catch (e) {
+    if (e.code !== "ENOENT") throw e;
+    return null;
+  }
+}
+
 files.rm_recursive_async = (path) => {
   return new Promise((resolve, reject) => {
     rimraf(files.convertToOSPath(path), err => err
@@ -495,7 +504,7 @@ files.cp_r = function(from, to, options = {}) {
   files.mkdir_p(files.pathDirname(to));
 
   if (stat.isSymbolicLink()) {
-    files.symlink(files.readlink(from), to);
+    symlinkWithOverwrite(files.readlink(from), to);
 
   } else {
     // Create the file as readable and writable by everyone, and
@@ -516,6 +525,38 @@ files.cp_r = function(from, to, options = {}) {
     }
   }
 };
+
+// create a symlink, overwriting the target link, file, or directory
+// if it exists
+export function symlinkWithOverwrite(source, target) {
+  const args = [source, target];
+
+  if (process.platform === "win32") {
+    const absoluteSource = files.pathResolve(target, source);
+
+    if (files.stat(absoluteSource).isDirectory()) {
+      args[2] = "junction";
+    }
+  }
+
+  try {
+    files.symlink(...args);
+  } catch (e) {
+    if (e.code === "EEXIST") {
+      if (files.lstat(target).isSymbolicLink() &&
+          files.readlink(target) === source) {
+        // If the target already points to the desired source, we don't
+        // need to do anything.
+        return;
+      }
+      // overwrite existing link, file, or directory
+      files.rm_recursive(target);
+      files.symlink(...args);
+    } else {
+      throw e;
+    }
+  }
+}
 
 /**
  * Get every path in a directory recursively, treating symlinks as files
@@ -944,14 +985,16 @@ files.createTarGzStream = function (dirPath, options) {
 
 // Tar-gzips a directory into a tarball on disk, synchronously.
 // The tar archive will contain a top-level directory named after dirPath.
-files.createTarball = function (dirPath, tarball, options) {
+files.createTarball = Profile(function (dirPath, tarball) {
+  return "files.createTarball " + files.pathBasename(tarball);
+}, function (dirPath, tarball, options) {
   var out = files.createWriteStream(tarball);
   new Promise(function (resolve, reject) {
     out.on('error', reject);
     out.on('close', resolve);
     files.createTarGzStream(dirPath, options).pipe(out);
   }).await();
-};
+});
 
 // Use this if you'd like to replace a directory with another
 // directory as close to atomically as possible. It's better than
@@ -1003,7 +1046,9 @@ files.renameDirAlmostAtomically =
     // limitations, we'll resort to copying.
     if (forceCopy) {
       files.rm_recursive(toDir);
-      files.cp_r(fromDir, toDir);
+      files.cp_r(fromDir, toDir, {
+        preserveSymlinks: true,
+      });
     }
 
     // ... and take out the trash.
@@ -1621,7 +1666,10 @@ let dependOnPathSalt = 0;
 export const dependOnPath = require("optimism").wrap(
   // Always return something different to prevent optimism from
   // second-guessing the dirtiness of this function.
-  path => ++dependOnPathSalt
+  path => ++dependOnPathSalt,
+  // This function is disposable because we don't care about its result,
+  // only its role in optimistic dependency tracking/dirtying.
+  { disposable: true }
 );
 
 function wrapDestructiveFsFunc(name, pathArgIndices) {
@@ -1750,7 +1798,7 @@ if (files.isWindowsLikeFilesystem()) {
     }
 
     if (! success) {
-      files.cp_r(from, to);
+      files.cp_r(from, to, { preserveSymlinks: true });
       files.rm_recursive(from);
     }
   };

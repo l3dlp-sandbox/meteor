@@ -23,7 +23,7 @@ import {
 } from "./fs/optimistic.js";
 
 import {
-  mapWhereToArch,
+  mapWhereToArches,
 } from "./isobuild/package-api.js";
 
 import Resolver from "./isobuild/resolver.js";
@@ -728,20 +728,20 @@ _.extend(ProjectContext.prototype, {
   }),
 
   _getRootDepsAndConstraints: function () {
-    var self = this;
+    const depsAndConstraints = {
+      deps: [],
+      constraints: [],
+    };
 
-    var depsAndConstraints = {deps: [], constraints: []};
+    this._addAppConstraints(depsAndConstraints);
+    this._addLocalPackageConstraints(depsAndConstraints);
+    this._addReleaseConstraints(depsAndConstraints);
 
-    self._addAppConstraints(depsAndConstraints);
-    self._addLocalPackageConstraints(depsAndConstraints);
-    self._addReleaseConstraints(depsAndConstraints);
     return depsAndConstraints;
   },
 
   _addAppConstraints: function (depsAndConstraints) {
-    var self = this;
-
-    self.projectConstraintsFile.eachConstraint(function (constraint) {
+    this.projectConstraintsFile.eachConstraint(function (constraint) {
       // Add a dependency ("this package must be used") and a constraint
       // ("... at this version (maybe 'any reasonable')").
       depsAndConstraints.deps.push(constraint.package);
@@ -1297,13 +1297,20 @@ _.extend(exports.PlatformList.prototype, {
     return ! _.isEmpty(self.getCordovaPlatforms());
   },
 
-  getWebArchs: function () {
+  getWebArchs() {
     var self = this;
-    var archs = [ "web.browser" ];
+    var archs = [
+      "web.browser",
+      "web.browser.legacy",
+    ];
     if (self.usesCordova()) {
       archs.push("web.cordova");
     }
     return archs;
+  },
+
+  canDelayBuildingArch(arch) {
+    return arch === "web.browser.legacy";
   }
 });
 
@@ -1677,11 +1684,14 @@ export class MeteorConfig {
       // value as the entry module for all architectures.
       entryModulesByArch["os"] = configEntryModule;
       entryModulesByArch["web"] = configEntryModule;
-    } else if (configEntryModule && typeof configEntryModule === "object") {
+    } else if (configEntryModule &&
+               typeof configEntryModule === "object") {
       // If the top-level config value is an object, use its properties to
       // select an entry module for each architecture.
       Object.keys(configEntryModule).forEach(where => {
-        entryModulesByArch[mapWhereToArch(where)] = configEntryModule[where];
+        mapWhereToArches(where).forEach(arch => {
+          entryModulesByArch[arch] = configEntryModule[where];
+        });
       });
     }
 
@@ -1729,6 +1739,17 @@ export class MeteorConfig {
       if (res && typeof res === "object") {
         return files.pathRelative(this.appDirectory, res.path);
       }
+
+      buildmessage.error(
+        `Could not resolve meteor.mainModule ${
+          JSON.stringify(entryModule)
+        } in ${
+          files.pathRelative(
+            this.appDirectory,
+            this.packageJsonPath
+          )
+        } (${arch})`
+      );
     }
   }
 }
